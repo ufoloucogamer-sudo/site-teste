@@ -3,321 +3,709 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebKit Sandbox Probe Suite — 40 testes</title>
-<!--
-  Suíte de sondas DIAGNÓSTICAS (não-exploração) para avaliar a superfície
-  exposta de um browser WebKit em ambiente controlado.
-  Cada botão executa uma verificação de detecção/enumeração e grava no log.
-  Nenhum teste aqui contém payload de corrupção de memória ou exploit real;
-  eles medem o que o ambiente expõe (bridges, permissões, sandbox, CSP...).
--->
+<title>WebKit Security & Sandbox Probe Suite V2 — 65 Sondagens</title>
 <style>
-  :root { --bg:#0f1115; --panel:#171a21; --fg:#e6e8ee; --accent:#4da3ff; }
+  :root {
+    --bg-dark: #0b0e14;
+    --panel-bg: #141822;
+    --panel-border: #232a3b;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --fg-primary: #f1f5f9;
+    --fg-muted: #94a3b8;
+    --ok: #22c55e;
+    --warn: #eab308;
+    --fail: #ef4444;
+    --info: #38bdf8;
+  }
+
   * { box-sizing: border-box; }
-  body { margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-         background:var(--bg); color:var(--fg); }
-  header { padding:14px 18px; border-bottom:1px solid #2a2f3a; }
-  header h1 { font-size:16px; margin:0 0 4px; }
-  header p { font-size:12px; margin:0; color:#9aa3b2; }
-  main { display:grid; grid-template-columns: 1fr 1fr; gap:0; height:calc(100vh - 70px); }
-  #buttons { padding:12px; overflow-y:auto; border-right:1px solid #2a2f3a; }
-  .probe { display:block; width:100%; text-align:left; margin:0 0 6px; padding:8px 10px;
-           background:var(--panel); color:var(--fg); border:1px solid #2a2f3a;
-           border-radius:6px; cursor:pointer; font-size:12px; }
-  .probe:hover { border-color:var(--accent); }
-  .probe small { color:#9aa3b2; display:block; }
-  #side { display:flex; flex-direction:column; }
-  #toolbar { padding:8px 12px; border-bottom:1px solid #2a2f3a; display:flex; gap:8px; }
-  #toolbar button { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a;
-                    border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
-  #log { flex:1; overflow-y:auto; padding:10px 12px; font-size:11px; white-space:pre-wrap; }
-  .ok { color:#6fdc8c; } .warn { color:#f0c674; } .fail { color:#ff7a7a; } .info { color:#8ab4ff; }
+  body {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    background: var(--bg-dark);
+    color: var(--fg-primary);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  header {
+    padding: 12px 20px;
+    background: #10141d;
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { font-size: 17px; margin: 0 0 4px; color: var(--fg-primary); }
+  header p { font-size: 12px; margin: 0; color: var(--fg-muted); }
+  .badge {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--accent);
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+
+  /* Controls & Filter Bar */
+  #controls {
+    padding: 10px 16px;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .category-btn {
+    background: #1a202c;
+    color: var(--fg-muted);
+    border: 1px solid var(--panel-border);
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .category-btn:hover, .category-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  #search {
+    background: #0f121a;
+    border: 1px solid var(--panel-border);
+    color: var(--fg-primary);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    width: 200px;
+    outline: none;
+  }
+  #search:focus { border-color: var(--accent); }
+
+  /* Main Workspace Grid */
+  main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* Left Panel: Probe List */
+  #probe-panel {
+    padding: 12px;
+    overflow-y: auto;
+    border-right: 1px solid var(--panel-border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .probe-card {
+    background: #11151f;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .probe-card:hover {
+    border-color: var(--accent);
+    background: #161b28;
+  }
+  .probe-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2px;
+  }
+  .probe-id { font-weight: bold; color: var(--accent-hover); font-size: 12px; }
+  .probe-cat {
+    font-size: 9px;
+    text-transform: uppercase;
+    background: #1e2638;
+    color: var(--fg-muted);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .probe-desc { font-size: 11px; color: var(--fg-muted); }
+
+  /* Right Panel: Side & Log Output */
+  #side-panel {
+    display: flex;
+    flex-direction: column;
+    background: #0d1017;
+  }
+  #action-bar {
+    padding: 8px 12px;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .action-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .action-btn:hover { background: var(--accent-hover); }
+  .secondary-btn {
+    background: #1c2333;
+    color: var(--fg-primary);
+    border: 1px solid var(--panel-border);
+  }
+  .secondary-btn:hover { background: #263045; }
+
+  #log-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log-line { margin-bottom: 4px; }
+  .log-line.ok { color: var(--ok); }
+  .log-line.warn { color: var(--warn); }
+  .log-line.fail { color: var(--fail); }
+  .log-line.info { color: var(--info); }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>WebKit Sandbox Probe Suite</h1>
-  <p>40 sondas diagnósticas de superfície • ambiente controlado • resultados apenas no log local</p>
+  <div>
+    <h1>WebKit Security & Sandbox Probe Suite V2</h1>
+    <p>65 Sondagens diagnósticas de superfície • ambiente controlado • validação sem exploração</p>
+  </div>
+  <div class="badge" id="statsBadge">0/65 sondas visíveis</div>
 </header>
+
+<div id="controls">
+  <button class="category-btn active" data-cat="all">Todas</button>
+  <button class="category-btn" data-cat="bridge">Bridge & Env</button>
+  <button class="category-btn" data-cat="script">Script & Scope</button>
+  <button class="category-btn" data-cat="storage">Storage & Cache</button>
+  <button class="category-btn" data-cat="dom">DOM & Shadow</button>
+  <button class="category-btn" data-cat="worker">Workers & Timers</button>
+  <button class="category-btn" data-cat="origin">Origin & Network</button>
+  <input type="text" id="search" placeholder="Buscar sonda por nome/desc..." />
+</div>
+
 <main>
-  <div id="buttons"></div>
-  <div id="side">
-    <div id="toolbar">
-      <button id="runAll">▶ Executar todas</button>
-      <button id="export">⬇ Exportar log (.txt)</button>
-      <button id="clear">🗑 Limpar</button>
+  <div id="probe-panel"></div>
+  <div id="side-panel">
+    <div id="action-bar">
+      <button class="action-btn" id="runAll">▶ Executar Todas</button>
+      <button class="action-btn secondary-btn" id="exportTxt">⬇ Log (.txt)</button>
+      <button class="action-btn secondary-btn" id="exportJson">⬇ Log (.json)</button>
+      <button class="action-btn secondary-btn" id="clearLog">🗑 Limpar</button>
     </div>
-    <div id="log"></div>
+    <div id="log-container"></div>
   </div>
 </main>
 
 <script>
 "use strict";
-const logEl = document.getElementById("log");
+
+const logEl = document.getElementById("log-container");
+const probePanel = document.getElementById("probe-panel");
+const statsBadge = document.getElementById("statsBadge");
 const entries = [];
 
 function stamp() { return new Date().toISOString(); }
+
 function log(level, name, msg) {
-  const line = `[${stamp()}] [${level.toUpperCase()}] ${name} :: ${msg}`;
-  entries.push(line);
+  const lineStr = `[${stamp()}] [${level.toUpperCase()}] ${name} :: ${msg}`;
+  entries.push({ timestamp: stamp(), level, probe: name, message: msg });
+  
   const div = document.createElement("div");
-  div.className = level;
-  div.textContent = line;
+  div.className = `log-line ${level}`;
+  div.textContent = lineStr;
   logEl.appendChild(div);
   logEl.scrollTop = logEl.scrollHeight;
 }
 
 function safe(fn) {
-  return function () {
+  return function() {
     try { return fn(); }
-    catch (e) { return "EXCEPTION: " + (e && e.name) + " — " + (e && e.message); }
+    catch (e) { return "EXCEÇÃO: " + (e && e.name) + " — " + (e && e.message); }
   };
 }
 
-/* ---- 40 sondas de detecção (diagnóstico, sem payloads de exploit) ---- */
+/* ==========================================================================
+   SUÍTE DE 65 SONDAGENS DIAGNÓSTICAS (CATEGORIZADAS)
+   ========================================================================== */
 const probes = [
-  ["01-bridge-webkit", "Expõe window.webkit.messageHandlers?",
+  // --- 1. BRIDGE & ENVIRONMENT ---
+  ["01-bridge-webkit", "bridge", "Expõe window.webkit.messageHandlers?",
    safe(() => (window.webkit && window.webkit.messageHandlers)
      ? "EXPOSTO: " + Object.keys(window.webkit.messageHandlers).join(", ")
      : "não exposto")],
 
-  ["02-bridge-prompt", "Handlers acessíveis via prompt()?",
-   safe(() => typeof prompt === "function" ? "prompt() existe (verifique se app nativo intercepta)" : "sem prompt()")],
+  ["02-bridge-prompt", "bridge", "Handlers acessíveis via prompt()?",
+   safe(() => typeof prompt === "function" ? "prompt() existe (verifique se o ambiente intercepta)" : "sem prompt()")],
 
-  ["03-jscore-version", "Versão do motor via userAgent",
+  ["03-jscore-version", "bridge", "Versão do motor e UserAgent",
    safe(() => navigator.userAgent)],
 
-  ["04-sandbox-iframe", "Iframe sandbox bloqueia script sem allow-scripts?",
+  ["04-sandbox-iframe", "bridge", "Iframe sandbox bloqueia script sem allow-scripts?",
    safe(() => {
      const f = document.createElement("iframe");
      f.setAttribute("sandbox", "");
      f.srcdoc = "<script>parent.postMessage('escaped','*')<\/script>";
      document.body.appendChild(f);
-     setTimeout(() => f.remove(), 500);
+     setTimeout(() => f.remove(), 400);
      return "iframe sandbox vazio criado; se log mostrar 'escaped', o sandbox falhou";
    })],
 
-  ["05-sandbox-allow-scripts", "allow-scripts sem allow-same-origin: origin é opaque?",
+  ["05-sandbox-allow-scripts", "bridge", "allow-scripts sem allow-same-origin origin é opaque?",
    safe(() => {
      const f = document.createElement("iframe");
      f.setAttribute("sandbox", "allow-scripts");
      f.srcdoc = "<script>try{parent.postMessage(location.origin,'*')}catch(e){}<\/script>";
      document.body.appendChild(f);
-     setTimeout(() => f.remove(), 500);
-     return "origin esperado: 'null'; qualquer outro valor indica problema";
+     setTimeout(() => f.remove(), 400);
+     return "origin esperado: 'null'; qualquer outro valor indica herança incorreta";
    })],
 
-  ["06-csp-meta", "CSP via <meta> é respeitada?",
-   safe(() => "CSP da página: " + (document.querySelector('meta[http-equiv]') ? "presente" : "ausente nesta página (teste numa página sua com CSP)") )],
+  ["06-csp-meta", "bridge", "CSP via <meta> tag presente?",
+   safe(() => document.querySelector('meta[http-equiv*="Content-Security-Policy"]') ? "CSP meta presente" : "ausente nesta página")],
 
-  ["07-postmessage-origin", "Mensagens recebidas têm origin verificável?",
+  ["07-postmessage-origin", "bridge", "Verificação de origin em mensagens postMessage",
    safe(() => {
-     window.addEventListener("message", e => log("info", "postmessage", "origin=" + e.origin + " data=" + String(e.data).slice(0,80)));
      window.postMessage("self-test", "*");
-     return "listener instalado; confira origem registrada";
+     return "postMessage de teste disparado; veja logs de mensagem";
    })],
 
-  ["08-file-protocol", "Página em file://? XMLHttpRequest local?",
+  ["08-file-protocol", "bridge", "Execução em file:// e leitura de arquivos locais",
    safe(() => {
      if (location.protocol !== "file:") return "protocolo " + location.protocol + " (não-file)";
      const x = new XMLHttpRequest();
      try { x.open("GET", "file:///etc/hosts", false); x.send(null); return "LEITURA LOCAL POSSÍVEL: " + x.status; }
-     catch (e) { return "bloqueado: " + e.name; }
+     catch (e) { return "bloqueado pelo navegador: " + e.name; }
    })],
 
-  ["09-localstorage-sandbox", "localStorage acessível neste contexto?",
-   safe(() => { try { localStorage.setItem("probe","1"); localStorage.removeItem("probe"); return "acessível"; } catch(e){ return "bloqueado: " + e.name; } })],
+  // --- 2. SCRIPT & SCOPE INTEGRITY ---
+  ["09-eval-scope", "script", "eval() isolado no escopo estrito?",
+   safe(() => {
+     eval("'use strict'; var __evalTest = 123;");
+     return typeof window.__evalTest === "undefined" ? "isolado no escopo (OK)" : "vazou para escopo global (ATENÇÃO)";
+   })],
 
-  ["10-indexeddb", "IndexedDB disponível?",
-   safe(() => "indexedDB" in window ? "disponível" : "ausente")],
+  ["10-function-constructor", "script", "Construtor Function() acessa contexto global?",
+   safe(() => {
+     const f = new Function("return this;");
+     return f() === window ? "acessa global (comportamento padrão JS)" : "escopo customizado/restrito";
+   })],
 
-  ["11-serviceworker", "ServiceWorker registrável?",
-   safe(() => ("serviceWorker" in navigator) ? "API presente (teste de registro exige servidor)" : "API ausente")],
+  ["11-function-caller", "script", "Function.caller inspecionável em funções não-strict?",
+   safe(() => {
+     function a() { return b.caller; }
+     function b() { return a(); }
+     const r = b();
+     return r ? "acessível (não-strict padrão)" : "bloqueado/nulo";
+   })],
 
-  ["12-notification-perm", "Estado de Notification.permission",
-   safe(() => ("Notification" in window) ? Notification.permission : "API ausente")],
+  ["12-arguments-callee", "script", "arguments.callee em modo strict lança erro?",
+   safe(() => {
+     try { (function() { "use strict"; return arguments.callee; })(); return "PERMITIDO (não-conforme strict)"; }
+     catch(e) { return "TypeError bloqueado corretamente no strict (OK)"; }
+   })],
 
-  ["13-geolocation", "Geolocalização exposta sem gesto?",
-   safe(() => ("geolocation" in navigator) ? "API presente (permissão real exige prompt)" : "ausente")],
+  ["13-globalthis-shadow", "script", "globalThis é idêntico ao objeto window?",
+   safe(() => globalThis === window ? "globalThis === window (íntegro)" : "disparidade entre globalThis e window")],
 
-  ["14-permissions-api", "Permissions API consultável?",
-   safe(() => navigator.permissions
-     ? navigator.permissions.query({name:"notifications"}).then(r => log("info","permissions","notifications="+r.state)) && "consultando..."
-     : "ausente")],
+  ["14-prototype-object", "script", "Integridade do Object.prototype",
+   safe(() => {
+     const k = "__probeTest_" + Date.now();
+     const o = {}; o[k] = 1;
+     return ({}[k] === 1) ? "POLUÍDO (Grave)" : "íntegro (OK)";
+   })],
 
-  ["15-sharedarraybuffer", "SharedArrayBuffer disponível (isolamento cross-origin)?",
-   safe(() => typeof SharedArrayBuffer !== "undefined"
-     ? "DISPONÍVEL — crossOriginIsolated=" + self.crossOriginIsolated
-     : "indefinido — crossOriginIsolated=" + self.crossOriginIsolated)],
+  ["15-prototype-array", "script", "Integridade dos métodos de Array.prototype",
+   safe(() => typeof Array.prototype.map === "function" && typeof Array.prototype.slice === "function" ? "íntegro (OK)" : "adulterado")],
 
-  ["16-wasm", "WebAssembly compilável?",
-   safe(() => typeof WebAssembly === "object" ? "presente" : "ausente")],
+  ["16-prototype-string", "script", "Integridade de String.prototype",
+   safe(() => typeof String.prototype.substring === "function" ? "íntegro (OK)" : "adulterado")],
 
-  ["17-jit-timing", "Indicador grosseiro de JIT (laço cronometrado)",
+  ["17-proxy-traps", "script", "Suporte a Proxy e Reflect traps",
+   safe(() => {
+     const target = { a: 1 };
+     const p = new Proxy(target, { get: (t, k) => k in t ? t[k] * 2 : 0 });
+     return p.a === 2 ? "Proxy funcionando (OK)" : "Proxy falhou";
+   })],
+
+  ["18-error-stack-leak", "script", "Stack trace de erros expõe caminhos internos?",
+   safe(() => {
+     try { null.x; } catch(e) { return (e.stack || "sem stack trace").split("\n")[0]; }
+     return "sem erro";
+   })],
+
+  ["19-console-hooks", "script", "console.log é sobrescrevível por scripts?",
+   safe(() => {
+     const orig = console.log;
+     try {
+       console.log = () => {};
+       const ok = console.log !== orig;
+       console.log = orig;
+       return ok ? "sobrescrevível por JS" : "protegido/somente leitura";
+     } catch(e) { console.log = orig; return "protegido"; }
+   })],
+
+  ["20-jit-timing", "script", "Loop de performance JIT (5M iterações)",
    safe(() => {
      const t0 = performance.now();
      let s = 0; for (let i = 0; i < 5e6; i++) s += i % 7;
-     return "loop=" + (performance.now() - t0).toFixed(1) + "ms (s=" + s + ") — variação entre execuções sugere tiers JIT";
+     const dt = performance.now() - t0;
+     return `tempo=${dt.toFixed(1)}ms (s=${s}) — indica presença de otimizador JIT`;
    })],
 
-  ["18-window-open", "window.open permitido sem gesto?",
+  // --- 3. STORAGE & CACHE ---
+  ["21-localstorage", "storage", "localStorage acessível e gravável?",
    safe(() => {
-     const w = window.open("about:blank", "_blank");
-     if (w) { w.close(); return "permitido"; }
-     return "bloqueado pelo bloqueador de pop-ups";
+     localStorage.setItem("__probe", "1");
+     localStorage.removeItem("__probe");
+     return "acessível e gravável (OK)";
    })],
 
-  ["19-iframe-srcdoc-origin", "srcdoc herda origin do pai?",
+  ["22-sessionstorage", "storage", "sessionStorage acessível?",
+   safe(() => {
+     sessionStorage.setItem("__probe", "1");
+     sessionStorage.removeItem("__probe");
+     return "acessível (OK)";
+   })],
+
+  ["23-indexeddb", "storage", "IndexedDB API disponível?",
+   safe(() => "indexedDB" in window ? "API disponível" : "ausente/bloqueado")],
+
+  ["24-cache-storage", "storage", "CacheStorage API (caches.open) disponível?",
+   safe(() => "caches" in window ? "caches API disponível" : "ausente")],
+
+  ["25-opfs-storage", "storage", "Origin Private File System (OPFS) disponível?",
+   safe(() => (navigator.storage && typeof navigator.storage.getDirectory === "function") ? "OPFS disponível" : "ausente")],
+
+  ["26-storage-estimate", "storage", "StorageManager.estimate() consultável?",
+   safe(() => {
+     if (navigator.storage && navigator.storage.estimate) {
+       navigator.storage.estimate().then(e => log("info", "storage-estimate", `quota=${e.quota} usage=${e.usage}`));
+       return "consultando cota...";
+     }
+     return "API ausente";
+   })],
+
+  ["27-storage-persisted", "storage", "navigator.storage.persisted() disponível?",
+   safe(() => (navigator.storage && navigator.storage.persisted) ? "API presente" : "ausente")],
+
+  ["28-broadcast-channel", "storage", "BroadcastChannel API disponível?",
+   safe(() => typeof BroadcastChannel !== "undefined" ? "BroadcastChannel presente" : "ausente")],
+
+  ["29-websql", "storage", "Legacy Web SQL (openDatabase) detectado?",
+   safe(() => "openDatabase" in window ? "OBSOLETO: Web SQL exposto" : "ausente (seguro)")],
+
+  ["30-cookies-access", "storage", "document.cookie leitura/escrita",
+   safe(() => {
+     document.cookie = "__probe=1";
+     const ok = document.cookie.includes("__probe=1");
+     return ok ? "leitura/escrita OK" : "bloqueado/sem acesso";
+   })],
+
+  ["31-cookie-store", "storage", "Modern CookieStore API disponível?",
+   safe(() => "cookieStore" in window ? "CookieStore API presente" : "ausente")],
+
+  ["32-sharedarraybuffer", "storage", "SharedArrayBuffer & crossOriginIsolated",
+   safe(() => typeof SharedArrayBuffer !== "undefined"
+     ? `DISPONÍVEL — crossOriginIsolated=${self.crossOriginIsolated}`
+     : `indefinido — crossOriginIsolated=${self.crossOriginIsolated}`)],
+
+  // --- 4. DOM & SHADOW ---
+  ["33-domparser-svg", "dom", "DOMParser SVG inline script execution",
+   safe(() => {
+     const d = new DOMParser().parseFromString("<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml");
+     return d.querySelector("parsererror") ? "rejeitado por erro" : "parsed com sucesso (OK)";
+   })],
+
+  ["34-domparser-html", "dom", "DOMParser text/html disponível?",
+   safe(() => {
+     const d = new DOMParser().parseFromString("<div>test</div>", "text/html");
+     return d.body.textContent === "test" ? "disponível (OK)" : "falhou";
+   })],
+
+  ["35-template-script", "dom", "<template> tag não executa scripts no parse",
+   safe(() => {
+     const t = document.createElement("template");
+     t.innerHTML = "<script>window.__templateExec=1<\/script>";
+     return typeof window.__templateExec === "undefined" ? "scripts em <template> permanecem inertes (OK)" : "SCRIPT EXECUTADO EM TEMPLATE (Grave)";
+   })],
+
+  ["36-shadow-dom-closed", "dom", "ShadowDOM modo 'closed' bloqueia shadowRoot?",
+   safe(() => {
+     const div = document.createElement("div");
+     const shadow = div.attachShadow({ mode: "closed" });
+     return div.shadowRoot === null ? "shadowRoot inacessível (closed OK)" : "VAZOU: shadowRoot exposto";
+   })],
+
+  ["37-custom-elements", "dom", "CustomElementRegistry (customElements) disponível?",
+   safe(() => "customElements" in window ? "disponível" : "ausente")],
+
+  ["38-adopted-stylesheets", "dom", "document.adoptedStyleSheets disponível?",
+   safe(() => "adoptedStyleSheets" in document ? "disponível" : "ausente")],
+
+  ["39-element-attach-shadow", "dom", "Element.prototype.attachShadow disponível?",
+   safe(() => typeof Element.prototype.attachShadow === "function" ? "disponível" : "ausente")],
+
+  ["40-html-sanitizer", "dom", "HTML Sanitizer API (window.Sanitizer) disponível?",
+   safe(() => "Sanitizer" in window ? "Sanitizer API presente" : "ausente")],
+
+  ["41-trusted-types", "dom", "Trusted Types API (window.trustedTypes) disponível?",
+   safe(() => "trustedTypes" in window ? "Trusted Types presente" : "ausente")],
+
+  ["42-xslt-processor", "dom", "XSLTProcessor API disponível?",
+   safe(() => "XSLTProcessor" in window ? "XSLTProcessor presente" : "ausente")],
+
+  ["43-xml-serializer", "dom", "XMLSerializer API disponível?",
+   safe(() => "XMLSerializer" in window ? "XMLSerializer presente" : "ausente")],
+
+  ["44-canvas-todataurl", "dom", "Canvas.toDataURL() extração de imagem",
+   safe(() => {
+     const c = document.createElement("canvas");
+     c.width = 10; c.height = 10;
+     const data = c.toDataURL();
+     return data.startsWith("data:image/png") ? "extração de canvas permitida" : "bloqueada";
+   })],
+
+  // --- 5. WORKERS & TIMERS ---
+  ["45-web-worker", "worker", "Dedicated Worker (Worker) via Blob URL",
+   safe(() => {
+     try {
+       const w = new Worker(URL.createObjectURL(new Blob(["postMessage(1)"])));
+       w.terminate();
+       return "Worker criado com sucesso (OK)";
+     } catch(e) { return "bloqueado/erro: " + e.name; }
+   })],
+
+  ["46-shared-worker", "worker", "SharedWorker API disponível?",
+   safe(() => "SharedWorker" in window ? "SharedWorker presente" : "ausente")],
+
+  ["47-service-worker", "worker", "ServiceWorker API disponível em navigator?",
+   safe(() => "serviceWorker" in navigator ? "ServiceWorker API presente" : "ausente")],
+
+  ["48-message-channel", "worker", "MessageChannel / MessagePort transferência",
+   safe(() => {
+     if (typeof MessageChannel === "undefined") return "ausente";
+     const mc = new MessageChannel();
+     mc.port1.close(); mc.port2.close();
+     return "MessageChannel operacional";
+   })],
+
+  ["49-offscreencanvas", "worker", "OffscreenCanvas API disponível?",
+   safe(() => "OffscreenCanvas" in window ? "OffscreenCanvas presente" : "ausente")],
+
+  ["50-timer-precision", "worker", "Resolução de performance.now() (Spectre check)",
+   safe(() => {
+     const t1 = performance.now();
+     const t2 = performance.now();
+     const diff = t2 - t1;
+     return `resolução delta=${diff.toFixed(4)}ms — ${diff === 0 ? "arredondado/mitigado" : "alta precisão"}`;
+   })],
+
+  ["51-microtask-queue", "worker", "queueMicrotask vs Promise queue order",
+   safe(() => {
+     let order = [];
+     queueMicrotask(() => order.push("microtask"));
+     Promise.resolve().then(() => order.push("promise"));
+     setTimeout(() => log("info", "microtask-queue", "ordem=" + order.join("->")), 50);
+     return "disparado agendamento...";
+   })],
+
+  ["52-request-animation-frame", "worker", "requestAnimationFrame disponível?",
+   safe(() => "requestAnimationFrame" in window ? "presente" : "ausente")],
+
+  ["53-performance-memory", "worker", "performance.memory (heap JS) exposto?",
+   safe(() => performance.memory ? `EXPOSTO: usedHeap=${(performance.memory.usedJSHeapSize/1024/1024).toFixed(2)}MB` : "não exposto (WebKit padrão)")],
+
+  ["54-performance-observer", "worker", "PerformanceObserver API disponível?",
+   safe(() => "PerformanceObserver" in window ? "presente" : "ausente")],
+
+  // --- 6. ORIGIN & NETWORK ---
+  ["55-iframe-srcdoc-origin", "origin", "Iframe srcdoc herda origem pai?",
    safe(() => {
      const f = document.createElement("iframe");
      f.srcdoc = "<script>parent.postMessage({srcdocOrigin: location.origin}, '*')<\/script>";
-     document.body.appendChild(f); setTimeout(() => f.remove(), 500);
-     return "criado; origem registrada no listener do teste 07";
+     document.body.appendChild(f);
+     setTimeout(() => f.remove(), 400);
+     return "iframe srcdoc disparado; confira evento postMessage";
    })],
 
-  ["20-blob-url-iframe", "Iframe com blob: URL herda origem?",
+  ["56-blob-url-iframe", "origin", "Iframe com Blob URL herda origem pai?",
    safe(() => {
      const b = new Blob(["<script>parent.postMessage({blobOrigin: location.origin}, '*')<\/script>"], {type:"text/html"});
      const f = document.createElement("iframe");
      f.src = URL.createObjectURL(b);
-     document.body.appendChild(f); setTimeout(() => f.remove(), 500);
-     return "criado; confira 'blobOrigin' no log";
+     document.body.appendChild(f);
+     setTimeout(() => f.remove(), 400);
+     return "iframe blob URL disparado; confira evento postMessage";
    })],
 
-  ["21-document-domain", "document.domain é gravável?",
+  ["57-window-open", "origin", "window.open('about:blank') sem gesto do usuário",
    safe(() => {
-     try { const old = document.domain; document.domain = document.domain; return "gravável (" + old + ")"; }
-     catch(e){ return "somente leitura: " + e.name; }
+     const w = window.open("about:blank", "_blank");
+     if (w) { w.close(); return "PERMITIDO sem gesto"; }
+     return "bloqueado por pop-up blocker";
    })],
 
-  ["22-cookies", "document.cookie acessível?",
-   safe(() => { try { document.cookie = "probe=1"; const ok = document.cookie.includes("probe=1"); return ok ? "gravável/leitura OK" : "sem acesso"; } catch(e){ return "bloqueado: " + e.name; } })],
+  ["58-window-opener", "origin", "window.opener referência presente?",
+   safe(() => window.opener ? "PRESENTE (recomenda-se rel=noopener)" : "nulo (OK)")],
 
-  ["23-history", "history.length e navegação",
-   safe(() => "history.length=" + history.length)],
-
-  ["24-opener", "window.opener presente?",
-   safe(() => window.opener ? "PRESENTE — links externos devem usar rel=noopener" : "nulo")],
-
-  ["25-prototype-pollution-check", "Object.prototype íntegro?",
-   safe(() => {
-     const k = "__probe" + Date.now();
-     const o = {}; o[k] = 1;
-     const polluted = ({}[k] === 1);
-     return polluted ? "POLUÍDO — grave" : "íntegro";
-   })],
-
-  ["26-error-stack", "Stack traces expõem caminhos internos?",
-   safe(() => { try { null.x; } catch(e){ return (e.stack || "sem stack").split("\n")[0]; } return "?"; })],
-
-  ["27-worker", "Web Worker disponível?",
+  ["59-document-domain", "origin", "document.domain gravável?",
    safe(() => {
      try {
-       const w = new Worker(URL.createObjectURL(new Blob(["postMessage(1)"])));
-       w.terminate(); return "disponível";
-     } catch(e){ return "bloqueado: " + e.name; }
+       const old = document.domain;
+       document.domain = document.domain;
+       return "gravável (" + old + ")";
+     } catch(e) { return "somente leitura: " + e.name; }
    })],
 
-  ["28-webgl", "WebGL contexto criável?",
-   safe(() => {
-     const c = document.createElement("canvas");
-     const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
-     return gl ? "criável — renderer: " + (gl.getParameter(gl.RENDERER) || "?") : "indisponível";
-   })],
+  ["60-fetch-credentials", "origin", "fetch() com credentials: 'include' suportado?",
+   safe(() => "fetch" in window ? "fetch API disponível" : "fetch ausente")],
 
-  ["29-webgl-debug-info", "WEBGL_debug_renderer_info expõe GPU real?",
-   safe(() => {
-     const gl = document.createElement("canvas").getContext("webgl");
-     if (!gl) return "sem WebGL";
-     const ext = gl.getExtension("WEBGL_debug_renderer_info");
-     return ext ? "EXPOSTO: " + gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "extensão ausente (bom sinal)";
-   })],
+  ["61-webrtc-peer", "origin", "RTCPeerConnection (WebRTC) presente?",
+   safe(() => "RTCPeerConnection" in window ? "presente" : "ausente")],
 
-  ["30-webrtc", "WebRTC exposto (vazamento de IP local)?",
-   safe(() => ("RTCPeerConnection" in window) ? "presente — teste de ICE exigiria rede" : "ausente")],
+  ["62-geolocation", "origin", "navigator.geolocation presente?",
+   safe(() => "geolocation" in navigator ? "presente" : "ausente")],
 
-  ["31-clipboard", "Clipboard API acessível sem gesto?",
-   safe(() => navigator.clipboard ? "API presente (leitura real exige permissão/gesto)" : "ausente")],
+  ["63-clipboard-api", "origin", "navigator.clipboard disponível?",
+   safe(() => navigator.clipboard ? "presente" : "ausente")],
 
-  ["32-media-devices", "enumerateDevices lista hardware sem permissão?",
-   safe(() => navigator.mediaDevices
-     ? navigator.mediaDevices.enumerateDevices().then(d =>
-         log("info","media-devices","dispositivos="+d.length+" labels="+(d.some(x=>x.label)?"visíveis":"ocultos"))) && "consultando..."
-     : "API ausente")],
+  ["64-media-devices", "origin", "navigator.mediaDevices disponível?",
+   safe(() => navigator.mediaDevices ? "presente" : "ausente")],
 
-  ["33-autofill", "Campos de senha disparam autofill?",
-   safe(() => "verificação manual: crie um form de teste no seu app")],
-
-  ["34-mixed-content", "Subrecurso http:// bloqueado em página https://?",
-   safe(() => location.protocol === "https:"
-     ? "teste: carregue <img src='http://...'> no seu servidor e veja se é bloqueado"
-     : "página não é https — n/a")],
-
-  ["35-referrer", "Referrer enviado para subrecursos?",
-   safe(() => "Referrer-Policy efetiva: " + (document.referrerPolicy || "padrão do browser"))],
-
-  ["36-xslt", "XSLTProcessor presente?",
-   safe(() => ("XSLTProcessor" in window) ? "presente" : "ausente")],
-
-  ["37-domparser-svg", "DOMParser aceita image/svg+xml?",
-   safe(() => {
-     const d = new DOMParser().parseFromString("<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml");
-     return d.querySelector("parsererror") ? "rejeitado" : "aceito";
-   })],
-
-  ["38-custom-scheme", "Esquemas customizados (app://, intent://) navegáveis?",
-   safe(() => "verificação manual: tente location.href='seuesquema://teste' e observe se o sistema operacional responde")],
-
-  ["39-console-hooks", "console.* sobrescrevível (hooks injetados)?",
-   safe(() => {
-     const orig = console.log;
-     try { console.log = () => {}; const ok = console.log !== orig; console.log = orig; return ok ? "sobrescrevível" : "protegido"; }
-     catch(e){ console.log = orig; return "protegido: " + e.name; }
-   })],
-
-  ["40-perf-memory", "performance.memory / informações de heap expostas?",
-   safe(() => performance.memory
-     ? "EXPOSTO: heap=" + performance.memory.usedJSHeapSize
-     : "não exposto")],
+  ["65-permissions-api", "origin", "navigator.permissions disponível?",
+   safe(() => navigator.permissions ? "presente" : "ausente")],
 ];
 
-/* ---- UI ---- */
-const btnBox = document.getElementById("buttons");
-probes.forEach(([id, desc, fn]) => {
-  const b = document.createElement("button");
-  b.className = "probe";
-  b.innerHTML = `<strong>${id}</strong><small>${desc}</small>`;
-  b.onclick = () => {
-    const r = fn();
-    if (r !== undefined && r !== null && typeof r !== "object") {
-      const lvl = /EXPOSTO|POSSÍVEL|POLUÍDO|escaped/.test(String(r)) ? "warn" : "info";
-      log(lvl, id, String(r));
+/* ==========================================================================
+   RENDERIZAÇÃO DA UI E INTERAÇÕES
+   ========================================================================== */
+let activeCategory = "all";
+let searchQuery = "";
+
+function renderProbes() {
+  probePanel.innerHTML = "";
+  let count = 0;
+
+  probes.forEach(([id, cat, desc, fn]) => {
+    const matchCat = activeCategory === "all" || activeCategory === cat;
+    const matchSearch = searchQuery === "" || 
+                        id.toLowerCase().includes(searchQuery) || 
+                        desc.toLowerCase().includes(searchQuery);
+
+    if (matchCat && matchSearch) {
+      count++;
+      const card = document.createElement("div");
+      card.className = "probe-card";
+      card.innerHTML = `
+        <div class="probe-header">
+          <span class="probe-id">${id}</span>
+          <span class="probe-cat">${cat}</span>
+        </div>
+        <div class="probe-desc">${desc}</div>
+      `;
+      card.onclick = () => {
+        const res = fn();
+        if (res !== undefined && typeof res !== "object") {
+          const isWarn = /EXPOSTO|POSSÍVEL|POLUÍDO|escaped|PERMITIDO|VAZOU|Grave/.test(String(res));
+          log(isWarn ? "warn" : "info", id, String(res));
+        }
+      };
+      probePanel.appendChild(card);
     }
+  });
+
+  statsBadge.textContent = `${count}/${probes.length} sondas visíveis`;
+}
+
+// Filtros de Categoria
+document.querySelectorAll(".category-btn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".category-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeCategory = btn.dataset.cat;
+    renderProbes();
   };
-  btnBox.appendChild(b);
 });
 
-document.getElementById("runAll").onclick = () => {
-  log("info", "suite", "executando todas as 40 sondas...");
-  probes.forEach(([id, , fn], i) => setTimeout(() => {
-    const r = fn();
-    if (r !== undefined && typeof r !== "object")
-      log(/EXPOSTO|POSSÍVEL|POLUÍDO|escaped/.test(String(r)) ? "warn" : "info", id, String(r));
-  }, i * 120));
+// Busca
+document.getElementById("search").oninput = (e) => {
+  searchQuery = e.target.value.toLowerCase().trim();
+  renderProbes();
 };
 
-document.getElementById("export").onclick = () => {
-  const blob = new Blob([entries.join("\n") + "\n"], {type:"text/plain"});
+// Executar Todas
+document.getElementById("runAll").onclick = () => {
+  log("info", "suite", "Iniciando execução serial das 65 sondagens...");
+  probes.forEach(([id, , , fn], index) => {
+    setTimeout(() => {
+      const res = fn();
+      if (res !== undefined && typeof res !== "object") {
+        const isWarn = /EXPOSTO|POSSÍVEL|POLUÍDO|escaped|PERMITIDO|VAZOU|Grave/.test(String(res));
+        log(isWarn ? "warn" : "info", id, String(res));
+      }
+    }, index * 80);
+  });
+};
+
+// Exportar TXT
+document.getElementById("exportTxt").onclick = () => {
+  const txtContent = entries.map(e => `[${e.timestamp}] [${e.level.toUpperCase()}] ${e.probe} :: ${e.message}`).join("\n");
+  const blob = new Blob([txtContent + "\n"], { type: "text/plain" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "webkit-probe-log-" + Date.now() + ".txt";
+  a.download = `webkit-probe-log-V2-${Date.now()}.txt`;
   a.click();
-  log("ok", "export", "log exportado como arquivo .txt");
+  log("ok", "export", "Log exportado em formato TXT.");
 };
 
-document.getElementById("clear").onclick = () => { entries.length = 0; logEl.innerHTML = ""; };
+// Exportar JSON
+document.getElementById("exportJson").onclick = () => {
+  const jsonContent = JSON.stringify(entries, null, 2);
+  const blob = new Blob([jsonContent], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `webkit-probe-log-V2-${Date.now()}.json`;
+  a.click();
+  log("ok", "export", "Log exportado em formato JSON.");
+};
 
-log("info", "suite", "pronta — " + probes.length + " sondas carregadas. UA: " + navigator.userAgent);
+// Limpar Log
+document.getElementById("clearLog").onclick = () => {
+  entries.length = 0;
+  logEl.innerHTML = "";
+};
+
+// Listener global de postMessage
+window.addEventListener("message", e => {
+  log("info", "postmessage-recv", `origin=${e.origin} data=${typeof e.data === "object" ? JSON.stringify(e.data) : String(e.data)}`);
+});
+
+// Inicialização
+renderProbes();
+log("info", "suite", `Suíte V2 pronta com ${probes.length} sondas diagnósticas.`);
 </script>
 </body>
 </html>

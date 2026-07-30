@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebKit Sandbox Probe Suite — 40 testes</title>
+<!--
+  Suíte de sondas DIAGNÓSTICAS (não-exploração) para avaliar a superfície
+  exposta de um browser WebKit em ambiente controlado.
+  Cada botão executa uma verificação de detecção/enumeração e grava no log.
+  Nenhum teste aqui contém payload de corrupção de memória ou exploit real;
+  eles medem o que o ambiente expõe (bridges, permissões, sandbox, CSP...).
+-->
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --fg:#e6e8ee; --accent:#4da3ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         background:var(--bg); color:var(--fg); }
+  header { padding:14px 18px; border-bottom:1px solid #2a2f3a; }
+  header h1 { font-size:16px; margin:0 0 4px; }
+  header p { font-size:12px; margin:0; color:#9aa3b2; }
+  main { display:grid; grid-template-columns: 1fr 1fr; gap:0; height:calc(100vh - 70px); }
+  #buttons { padding:12px; overflow-y:auto; border-right:1px solid #2a2f3a; }
+  .probe { display:block; width:100%; text-align:left; margin:0 0 6px; padding:8px 10px;
+           background:var(--panel); color:var(--fg); border:1px solid #2a2f3a;
+           border-radius:6px; cursor:pointer; font-size:12px; }
+  .probe:hover { border-color:var(--accent); }
+  .probe small { color:#9aa3b2; display:block; }
+  #side { display:flex; flex-direction:column; }
+  #toolbar { padding:8px 12px; border-bottom:1px solid #2a2f3a; display:flex; gap:8px; }
+  #toolbar button { background:var(--panel); color:var(--fg); border:1px solid #2a2f3a;
+                    border-radius:6px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  #log { flex:1; overflow-y:auto; padding:10px 12px; font-size:11px; white-space:pre-wrap; }
+  .ok { color:#6fdc8c; } .warn { color:#f0c674; } .fail { color:#ff7a7a; } .info { color:#8ab4ff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WebKit Sandbox Probe Suite</h1>
+  <p>40 sondas diagnósticas de superfície • ambiente controlado • resultados apenas no log local</p>
+</header>
+<main>
+  <div id="buttons"></div>
+  <div id="side">
+    <div id="toolbar">
+      <button id="runAll">▶ Executar todas</button>
+      <button id="export">⬇ Exportar log (.txt)</button>
+      <button id="clear">🗑 Limpar</button>
+    </div>
+    <div id="log"></div>
+  </div>
+</main>
+
+<script>
+"use strict";
+const logEl = document.getElementById("log");
+const entries = [];
+
+function stamp() { return new Date().toISOString(); }
+function log(level, name, msg) {
+  const line = `[${stamp()}] [${level.toUpperCase()}] ${name} :: ${msg}`;
+  entries.push(line);
+  const div = document.createElement("div");
+  div.className = level;
+  div.textContent = line;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function safe(fn) {
+  return function () {
+    try { return fn(); }
+    catch (e) { return "EXCEPTION: " + (e && e.name) + " — " + (e && e.message); }
+  };
+}
+
+/* ---- 40 sondas de detecção (diagnóstico, sem payloads de exploit) ---- */
+const probes = [
+  ["01-bridge-webkit", "Expõe window.webkit.messageHandlers?",
+   safe(() => (window.webkit && window.webkit.messageHandlers)
+     ? "EXPOSTO: " + Object.keys(window.webkit.messageHandlers).join(", ")
+     : "não exposto")],
+
+  ["02-bridge-prompt", "Handlers acessíveis via prompt()?",
+   safe(() => typeof prompt === "function" ? "prompt() existe (verifique se app nativo intercepta)" : "sem prompt()")],
+
+  ["03-jscore-version", "Versão do motor via userAgent",
+   safe(() => navigator.userAgent)],
+
+  ["04-sandbox-iframe", "Iframe sandbox bloqueia script sem allow-scripts?",
+   safe(() => {
+     const f = document.createElement("iframe");
+     f.setAttribute("sandbox", "");
+     f.srcdoc = "<script>parent.postMessage('escaped','*')<\/script>";
+     document.body.appendChild(f);
+     setTimeout(() => f.remove(), 500);
+     return "iframe sandbox vazio criado; se log mostrar 'escaped', o sandbox falhou";
+   })],
+
+  ["05-sandbox-allow-scripts", "allow-scripts sem allow-same-origin: origin é opaque?",
+   safe(() => {
+     const f = document.createElement("iframe");
+     f.setAttribute("sandbox", "allow-scripts");
+     f.srcdoc = "<script>try{parent.postMessage(location.origin,'*')}catch(e){}<\/script>";
+     document.body.appendChild(f);
+     setTimeout(() => f.remove(), 500);
+     return "origin esperado: 'null'; qualquer outro valor indica problema";
+   })],
+
+  ["06-csp-meta", "CSP via <meta> é respeitada?",
+   safe(() => "CSP da página: " + (document.querySelector('meta[http-equiv]') ? "presente" : "ausente nesta página (teste numa página sua com CSP)") )],
+
+  ["07-postmessage-origin", "Mensagens recebidas têm origin verificável?",
+   safe(() => {
+     window.addEventListener("message", e => log("info", "postmessage", "origin=" + e.origin + " data=" + String(e.data).slice(0,80)));
+     window.postMessage("self-test", "*");
+     return "listener instalado; confira origem registrada";
+   })],
+
+  ["08-file-protocol", "Página em file://? XMLHttpRequest local?",
+   safe(() => {
+     if (location.protocol !== "file:") return "protocolo " + location.protocol + " (não-file)";
+     const x = new XMLHttpRequest();
+     try { x.open("GET", "file:///etc/hosts", false); x.send(null); return "LEITURA LOCAL POSSÍVEL: " + x.status; }
+     catch (e) { return "bloqueado: " + e.name; }
+   })],
+
+  ["09-localstorage-sandbox", "localStorage acessível neste contexto?",
+   safe(() => { try { localStorage.setItem("probe","1"); localStorage.removeItem("probe"); return "acessível"; } catch(e){ return "bloqueado: " + e.name; } })],
+
+  ["10-indexeddb", "IndexedDB disponível?",
+   safe(() => "indexedDB" in window ? "disponível" : "ausente")],
+
+  ["11-serviceworker", "ServiceWorker registrável?",
+   safe(() => ("serviceWorker" in navigator) ? "API presente (teste de registro exige servidor)" : "API ausente")],
+
+  ["12-notification-perm", "Estado de Notification.permission",
+   safe(() => ("Notification" in window) ? Notification.permission : "API ausente")],
+
+  ["13-geolocation", "Geolocalização exposta sem gesto?",
+   safe(() => ("geolocation" in navigator) ? "API presente (permissão real exige prompt)" : "ausente")],
+
+  ["14-permissions-api", "Permissions API consultável?",
+   safe(() => navigator.permissions
+     ? navigator.permissions.query({name:"notifications"}).then(r => log("info","permissions","notifications="+r.state)) && "consultando..."
+     : "ausente")],
+
+  ["15-sharedarraybuffer", "SharedArrayBuffer disponível (isolamento cross-origin)?",
+   safe(() => typeof SharedArrayBuffer !== "undefined"
+     ? "DISPONÍVEL — crossOriginIsolated=" + self.crossOriginIsolated
+     : "indefinido — crossOriginIsolated=" + self.crossOriginIsolated)],
+
+  ["16-wasm", "WebAssembly compilável?",
+   safe(() => typeof WebAssembly === "object" ? "presente" : "ausente")],
+
+  ["17-jit-timing", "Indicador grosseiro de JIT (laço cronometrado)",
+   safe(() => {
+     const t0 = performance.now();
+     let s = 0; for (let i = 0; i < 5e6; i++) s += i % 7;
+     return "loop=" + (performance.now() - t0).toFixed(1) + "ms (s=" + s + ") — variação entre execuções sugere tiers JIT";
+   })],
+
+  ["18-window-open", "window.open permitido sem gesto?",
+   safe(() => {
+     const w = window.open("about:blank", "_blank");
+     if (w) { w.close(); return "permitido"; }
+     return "bloqueado pelo bloqueador de pop-ups";
+   })],
+
+  ["19-iframe-srcdoc-origin", "srcdoc herda origin do pai?",
+   safe(() => {
+     const f = document.createElement("iframe");
+     f.srcdoc = "<script>parent.postMessage({srcdocOrigin: location.origin}, '*')<\/script>";
+     document.body.appendChild(f); setTimeout(() => f.remove(), 500);
+     return "criado; origem registrada no listener do teste 07";
+   })],
+
+  ["20-blob-url-iframe", "Iframe com blob: URL herda origem?",
+   safe(() => {
+     const b = new Blob(["<script>parent.postMessage({blobOrigin: location.origin}, '*')<\/script>"], {type:"text/html"});
+     const f = document.createElement("iframe");
+     f.src = URL.createObjectURL(b);
+     document.body.appendChild(f); setTimeout(() => f.remove(), 500);
+     return "criado; confira 'blobOrigin' no log";
+   })],
+
+  ["21-document-domain", "document.domain é gravável?",
+   safe(() => {
+     try { const old = document.domain; document.domain = document.domain; return "gravável (" + old + ")"; }
+     catch(e){ return "somente leitura: " + e.name; }
+   })],
+
+  ["22-cookies", "document.cookie acessível?",
+   safe(() => { try { document.cookie = "probe=1"; const ok = document.cookie.includes("probe=1"); return ok ? "gravável/leitura OK" : "sem acesso"; } catch(e){ return "bloqueado: " + e.name; } })],
+
+  ["23-history", "history.length e navegação",
+   safe(() => "history.length=" + history.length)],
+
+  ["24-opener", "window.opener presente?",
+   safe(() => window.opener ? "PRESENTE — links externos devem usar rel=noopener" : "nulo")],
+
+  ["25-prototype-pollution-check", "Object.prototype íntegro?",
+   safe(() => {
+     const k = "__probe" + Date.now();
+     const o = {}; o[k] = 1;
+     const polluted = ({}[k] === 1);
+     return polluted ? "POLUÍDO — grave" : "íntegro";
+   })],
+
+  ["26-error-stack", "Stack traces expõem caminhos internos?",
+   safe(() => { try { null.x; } catch(e){ return (e.stack || "sem stack").split("\n")[0]; } return "?"; })],
+
+  ["27-worker", "Web Worker disponível?",
+   safe(() => {
+     try {
+       const w = new Worker(URL.createObjectURL(new Blob(["postMessage(1)"])));
+       w.terminate(); return "disponível";
+     } catch(e){ return "bloqueado: " + e.name; }
+   })],
+
+  ["28-webgl", "WebGL contexto criável?",
+   safe(() => {
+     const c = document.createElement("canvas");
+     const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+     return gl ? "criável — renderer: " + (gl.getParameter(gl.RENDERER) || "?") : "indisponível";
+   })],
+
+  ["29-webgl-debug-info", "WEBGL_debug_renderer_info expõe GPU real?",
+   safe(() => {
+     const gl = document.createElement("canvas").getContext("webgl");
+     if (!gl) return "sem WebGL";
+     const ext = gl.getExtension("WEBGL_debug_renderer_info");
+     return ext ? "EXPOSTO: " + gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "extensão ausente (bom sinal)";
+   })],
+
+  ["30-webrtc", "WebRTC exposto (vazamento de IP local)?",
+   safe(() => ("RTCPeerConnection" in window) ? "presente — teste de ICE exigiria rede" : "ausente")],
+
+  ["31-clipboard", "Clipboard API acessível sem gesto?",
+   safe(() => navigator.clipboard ? "API presente (leitura real exige permissão/gesto)" : "ausente")],
+
+  ["32-media-devices", "enumerateDevices lista hardware sem permissão?",
+   safe(() => navigator.mediaDevices
+     ? navigator.mediaDevices.enumerateDevices().then(d =>
+         log("info","media-devices","dispositivos="+d.length+" labels="+(d.some(x=>x.label)?"visíveis":"ocultos"))) && "consultando..."
+     : "API ausente")],
+
+  ["33-autofill", "Campos de senha disparam autofill?",
+   safe(() => "verificação manual: crie um form de teste no seu app")],
+
+  ["34-mixed-content", "Subrecurso http:// bloqueado em página https://?",
+   safe(() => location.protocol === "https:"
+     ? "teste: carregue <img src='http://...'> no seu servidor e veja se é bloqueado"
+     : "página não é https — n/a")],
+
+  ["35-referrer", "Referrer enviado para subrecursos?",
+   safe(() => "Referrer-Policy efetiva: " + (document.referrerPolicy || "padrão do browser"))],
+
+  ["36-xslt", "XSLTProcessor presente?",
+   safe(() => ("XSLTProcessor" in window) ? "presente" : "ausente")],
+
+  ["37-domparser-svg", "DOMParser aceita image/svg+xml?",
+   safe(() => {
+     const d = new DOMParser().parseFromString("<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml");
+     return d.querySelector("parsererror") ? "rejeitado" : "aceito";
+   })],
+
+  ["38-custom-scheme", "Esquemas customizados (app://, intent://) navegáveis?",
+   safe(() => "verificação manual: tente location.href='seuesquema://teste' e observe se o sistema operacional responde")],
+
+  ["39-console-hooks", "console.* sobrescrevível (hooks injetados)?",
+   safe(() => {
+     const orig = console.log;
+     try { console.log = () => {}; const ok = console.log !== orig; console.log = orig; return ok ? "sobrescrevível" : "protegido"; }
+     catch(e){ console.log = orig; return "protegido: " + e.name; }
+   })],
+
+  ["40-perf-memory", "performance.memory / informações de heap expostas?",
+   safe(() => performance.memory
+     ? "EXPOSTO: heap=" + performance.memory.usedJSHeapSize
+     : "não exposto")],
+];
+
+/* ---- UI ---- */
+const btnBox = document.getElementById("buttons");
+probes.forEach(([id, desc, fn]) => {
+  const b = document.createElement("button");
+  b.className = "probe";
+  b.innerHTML = `<strong>${id}</strong><small>${desc}</small>`;
+  b.onclick = () => {
+    const r = fn();
+    if (r !== undefined && r !== null && typeof r !== "object") {
+      const lvl = /EXPOSTO|POSSÍVEL|POLUÍDO|escaped/.test(String(r)) ? "warn" : "info";
+      log(lvl, id, String(r));
+    }
+  };
+  btnBox.appendChild(b);
+});
+
+document.getElementById("runAll").onclick = () => {
+  log("info", "suite", "executando todas as 40 sondas...");
+  probes.forEach(([id, , fn], i) => setTimeout(() => {
+    const r = fn();
+    if (r !== undefined && typeof r !== "object")
+      log(/EXPOSTO|POSSÍVEL|POLUÍDO|escaped/.test(String(r)) ? "warn" : "info", id, String(r));
+  }, i * 120));
+};
+
+document.getElementById("export").onclick = () => {
+  const blob = new Blob([entries.join("\n") + "\n"], {type:"text/plain"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "webkit-probe-log-" + Date.now() + ".txt";
+  a.click();
+  log("ok", "export", "log exportado como arquivo .txt");
+};
+
+document.getElementById("clear").onclick = () => { entries.length = 0; logEl.innerHTML = ""; };
+
+log("info", "suite", "pronta — " + probes.length + " sondas carregadas. UA: " + navigator.userAgent);
+</script>
+</body>
+</html>
